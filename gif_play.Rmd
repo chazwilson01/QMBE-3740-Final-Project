@@ -4,9 +4,14 @@ author: "Zach"
 date: "2023-12-05"
 output: html_document
 ---
+```{r}
+rm(list = ls())
+
+```
 
 ```{r}
 # * load packages ----
+
 library(devtools)
 library(dplyr)
 library(gganimate)

@@ -1,0 +1,210 @@
+---
+title: "BallCarrier"
+author: "Charlie Wilson"
+date: "2023-12-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+# These lines load packages
+library(caret)
+library(randomForest)
+library(gbm)
+library(DALEX)
+library(pROC)
+library(AppliedPredictiveModeling)
+library(tidyverse)
+library(performanceEstimation)
+library(glmnet)
+```
+
+#Read in Data
+
+```{r}
+data = read_csv("df_to_model (1).csv")
+```
+```{r}
+data[sapply(data, is.character)] <- lapply(data[sapply(data, is.character)], 
+                                       as.factor)
+```
+
+```{r}
+data = data %>% select(-pff_missedTackle)
+```
+
+```{r}
+data$playDirection <- as.numeric(data$playDirection == "right")
+```
+
+```{r}
+data %>%
+  keep(is.numeric) %>%
+  cor() %>%
+  corrplot::corrplot(tl.cex = 0.6)
+```
+
+#Train test Split
+```{r}
+set.seed(1122)
+samp = caret::createDataPartition(data$tackle, p = 0.7, list = FALSE)
+train = data[samp, ]
+test = data[-samp, ]
+rm(samp)
+```
+
+```{r}
+train %>%
+  select(tackle) %>% 
+  table()
+```
+
+```{r}
+
+```
+
+```{r}
+train$tackle = as.factor(train$tackle)
+```
+
+```{r}
+str(train)
+```
+
+#Balance the Classes
+
+
+```{r}
+set.seed(4032)
+train.bal = smote(tackle ~ .,
+                  data = train,
+                  perc.over = 3,
+                  perc.under = 1.5)
+
+# After using SMOTE to balance training
+# data, lets inspect the new counts.
+train.bal %>%
+  select(tackle) %>%
+  table() 
+```
+
+#GMB Model
+
+```{r}
+ set.seed(986)
+ gbm_model = train(
+   y = train.bal$tackle,
+   x = select(train.bal,-tackle),
+   method = "gbm",
+   verbose = FALSE,
+   trControl = trainControl(method = "boot", number = 5),
+   tuneLength = 10
+ )
+```
+```{r}
+plot(gbm_model)
+```
+```{r}
+gbm_explain = DALEX::explain(model = gbm_model,
+                             data = test,
+                             y = test$tackle==1,
+                             type = "classification",
+                             label = "GradientBoost")
+```
+
+#Random Forest Model
+
+```{r}
+ set.seed(986)
+ rf_model = train(
+   y = train.bal$tackle,
+   x = select(train.bal, -tackle),
+   method = "rf",
+   trControl = trainControl(method = "boot", number = 30),
+   tuneLength = 10
+ )
+```
+
+```{r}
+plot(rf_model)
+```
+
+```{r}
+rf_explain = DALEX::explain(model = rf_model,
+                            data = test,
+                            y = as.numeric(test$tackle=="1"),
+                            type = "classification",
+                            label = "Random Forest")
+```
+
+
+
+#Tree Model
+
+```{r}
+ctrl = caret::trainControl(method = "repeatedcv", number = 10, repeats = 5)
+set.seed(345)
+smote_tree = train(tackle ~ .,
+                        data = train.bal,
+                        method = "rpart",
+                        metric = "Kappa",
+                        trControl = ctrl,
+                        tuneGrid = expand.grid(cp = seq(0.0, 0.03, 0.0005)))
+
+plot(smote_tree)
+```
+
+#Model Evaluations
+##GMB Model 
+```{r}
+
+gbm_perf = DALEX::model_performance(gbm_explain, cutoff = 0.8)
+gbm_perf
+```
+##Random Forest Model
+```{r}
+rf_perf = DALEX::model_performance(rf_explain, cutoff = 0.5)
+rf_perf
+```
+##Tree Model
+```{r}
+pred_prob = predict(smote_tree, newdata = test, type = "prob")[,2]
+pred_class = factor(ifelse(pred_prob > 0.5, "1", "0"))
+
+```
+
+```{r}
+confusionMatrix(pred_class, as.factor(test$tackle), positive = "1")
+```
+
+##Lift Chart
+```{r}
+lift_curve <- plot(rf_perf, gbm_perf, geom = "lift")
+```
+
+```{r}
+lift_curve
+```
+
+
+```{r}
+lift_curve$data
+```
+```{r}
+rf_shap_2 = DALEX::predict_parts_shap(rf_explain, data[data$tackle_oppId==2,], B=25)
+```
+
+
+```{r}
+prob_2 = predict(rf_model, newdata = data[data$tackle_oppId==2,], type="prob")[,2]
+```
+
+```{r}
+plot(rf_shap_2) + 
+  ggtitle(paste("SHAP for Tackler 2: Prob =", round(prob_2,3)))
+```
+
